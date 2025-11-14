@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.git
+.gitignore
+.veǹv
+venv/
+.pytest_cache/
+.DS_store
+tests/
