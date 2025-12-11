@@ -1,4 +1,4 @@
-import uuid
+from uuid import uuid4, UUID
 from datetime import datetime
 from typing import Dict
 from .Usuario import Cliente
@@ -15,7 +15,7 @@ class Pedido:
             cliente (Cliente): Cliente que realiza el pedido.
             productos (dict[Producto, int]): Productos con sus cantidades.
         """
-        self.id = str(uuid.uuid4())
+        self.id: UUID = uuid4()
         self.fecha = datetime.now()
         self.cliente = cliente
         self.productos = productos

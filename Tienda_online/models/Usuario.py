@@ -1,4 +1,4 @@
-import uuid
+from uuid import uuid4, UUID
 
 class Usuario:
     """Clase base que representa a un usuario de la tienda."""
@@ -11,7 +11,7 @@ class Usuario:
             nombre (str): Nombre del usuario.
             email (str): Correo electrónico.
         """
-        self.id = str(uuid.uuid4())
+        self.id: UUID = uuid4()
         self.nombre = nombre
         self.email = email
 

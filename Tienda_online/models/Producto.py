@@ -1,4 +1,4 @@
-import uuid
+from uuid import uuid4, UUID
 
 class Producto:
     """Clase base que representa un producto genérico en la tienda."""
@@ -11,7 +11,7 @@ class Producto:
             precio (float): Precio del producto.
             stock (int): Cantidad disponible en inventario.
         """
-        self.id = str(uuid.uuid4())
+        self.id: UUID = uuid4()
         self.nombre = nombre
         self.precio = precio
         self.stock = stock
