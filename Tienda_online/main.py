@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 
 from services.Tienda_service import TiendaService
+from services.Auth_service import AuthService
 from models.Usuario import Usuario, Cliente
 from models.Producto import Producto, ProductoElectronico, ProductoRopa
 
-app = FastAPI(title="Tienda Online API - Práctica 3")
+app = FastAPI(title="Tienda Online API - Práctica 4")
 
 tienda_service = TiendaService()
+auth_service = AuthService()
+
+# OAuth2 scheme para autenticación con Bearer token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # ---------------------- SCHEMAS ---------------------- #
 
@@ -86,7 +92,154 @@ class PedidoRead(BaseModel):
     items: List[PedidoItemRead]
 
 
+# ------ Autenticación ------ #
+
+class UserRegister(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class UserRead(BaseModel):
+    id: UUID
+    username: str
+    email: str
+    created_at: datetime
+    is_active: bool
+
+
+# ---------------------- DEPENDENCIAS DE AUTENTICACIÓN ---------------------- #
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    """
+    Dependencia para obtener el usuario actual desde el token JWT.
+    
+    Args:
+        token (str): Token JWT del header Authorization.
+        
+    Returns:
+        User: Usuario autenticado.
+        
+    Raises:
+        HTTPException: Si el token es inválido o el usuario no existe.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudieron validar las credenciales",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    username = auth_service.verify_token(token)
+    if username is None:
+        raise credentials_exception
+    
+    user = auth_service.get_user_by_username(username)
+    if user is None:
+        raise credentials_exception
+    
+    return user
+
+
 # ---------------------- ENDPOINTS ---------------------- #
+
+# ------ AUTENTICACIÓN ------ #
+
+@app.post("/auth/register", response_model=UserRead, status_code=201)
+def register_user(user_data: UserRegister) -> UserRead:
+    """
+    Registra un nuevo usuario en el sistema.
+    
+    Verifica que no existan usuarios duplicados (username o email).
+    La contraseña se hashea con bcrypt antes de almacenarla.
+    """
+    try:
+        user = auth_service.create_user(
+            username=user_data.username,
+            email=str(user_data.email),
+            password=user_data.password
+        )
+        return UserRead(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            created_at=user.created_at,
+            is_active=user.is_active
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Autentica un usuario y devuelve un token JWT.
+    
+    El usuario debe proporcionar username y password válidos.
+    El token expira en 30 minutos.
+    """
+    user = auth_service.authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario o contraseña incorrectos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=30)
+    access_token = auth_service.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/auth/users", response_model=List[UserRead])
+def list_users():
+    """
+    Lista todos los usuarios registrados en el sistema.
+    
+    Devuelve información básica de todos los usuarios (sin contraseñas).
+    """
+    users = auth_service.list_users()
+    return [
+        UserRead(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            created_at=user.created_at,
+            is_active=user.is_active
+        )
+        for user in users
+    ]
+
+
+@app.get("/auth/me", response_model=UserRead)
+def get_current_user_info(current_user = Depends(get_current_user)):
+    """
+    Obtiene la información del usuario actualmente autenticado.
+    
+    Requiere token JWT válido en el header Authorization.
+    """
+    return UserRead(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        created_at=current_user.created_at,
+        is_active=current_user.is_active
+    )
+
+
+# ------ USUARIOS ------ #
 
 # ------ USUARIOS ------ #
 
@@ -149,8 +302,15 @@ def listar_usuarios() -> List[UsuarioRead]:
 # ------ PRODUCTOS ------ #
 
 @app.post("/productos", response_model=ProductoRead, status_code=201)
-def crear_producto(datos: ProductoCreate) -> ProductoRead:
-    """Crea un nuevo producto (genérico, electrónico o ropa)."""
+def crear_producto(
+    datos: ProductoCreate,
+    current_user = Depends(get_current_user)
+) -> ProductoRead:
+    """
+    Crea un nuevo producto (genérico, electrónico o ropa).
+    
+    **Requiere autenticación JWT.**
+    """
     tipo_lower = datos.tipo.lower()
     
     try:
@@ -291,9 +451,14 @@ def eliminar_producto(producto_id: str):
 # ------ PEDIDOS ------ #
 
 @app.post("/pedidos", response_model=PedidoRead, status_code=201)
-def crear_pedido(datos: PedidoCreate) -> PedidoRead:
+def crear_pedido(
+    datos: PedidoCreate,
+    current_user = Depends(get_current_user)
+) -> PedidoRead:
     """
     Crea un nuevo pedido.
+    
+    **Requiere autenticación JWT.**
     
     Verifica:
     - Existencia del cliente
